@@ -29,7 +29,8 @@ export class Hoffmation {
     /*** Custom initialization end ***/
 
     await HoffmationBase.initializeBeforeIoBroker(this.initializationData);
-    const devices: Devices = new Devices(devJson as { [id: string]: deviceConfig }, new RoomImportEnforcer());
+    const devices: Devices = new Devices(devJson as { [id: string]: deviceConfig }, new RoomImportEnforcer(), config);
+    HoffmationBase.initializePostRoomCreationBeforeIoBroker();
     HoffmationBase.startIoBroker(devices);
     HoffmationBase.initializePostIoBroker(defaultMuellSonos);
 

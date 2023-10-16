@@ -3,7 +3,7 @@ import config from '../config/private/roomConfig.json';
 
 const fs = require('fs');
 
-const DEVICE_TYPE: { [type: string]: { name: string; deviceClass: string } } = {
+const DEVICE_TYPE: { [type: string]: { name: string; deviceClass: string; overideDeviceType?: string } } = {
   Camera: { name: 'Camera', deviceClass: 'Camera' },
   Daikin: { name: 'Daikin', deviceClass: 'Daikin' },
   Espresense: { name: 'Espresense', deviceClass: 'Espresense' },
@@ -47,6 +47,8 @@ const DEVICE_TYPE: { [type: string]: { name: string; deviceClass: string } } = {
   ZigbeeUbisysAcuator: { name: 'Shutter', deviceClass: 'Zigbee' },
   ZigbeeUbisysLampe: { name: 'Shutter', deviceClass: 'Zigbee' },
   ZigbeeUbisysShutter: { name: 'Shutter', deviceClass: 'Zigbee' },
+  ShellyTrv: { name: 'Heater', deviceClass: 'Shelly' },
+  TuyaGarageOpener: { name: 'GarageDoor', deviceClass: 'Tuya', overideDeviceType: 'TuyaGarageDoorOpener' },
 };
 
 interface RoomModel {
@@ -54,6 +56,14 @@ interface RoomModel {
   nameLong: string;
   floor: number;
   devices: DeviceModel[];
+  startCoordinate?: Coordinate;
+  endCoordinate?: Coordinate;
+}
+
+interface Coordinate {
+  x: number;
+  y: number;
+  z: number;
 }
 
 interface DeviceModel {
@@ -65,6 +75,7 @@ interface DeviceModel {
   customName?: string;
   windowID?: number;
   includeInGroup: boolean;
+  coordinate?: Coordinate;
 }
 
 interface RoomConfigModel {
@@ -90,6 +101,8 @@ function createRooms(): void {
     private readonly folderPath: string;
     private fileBuilder: string[] = [];
     private readonly classNameCustom: string;
+    private endPoint: Coordinate | undefined;
+    private startPoint: Coordinate | undefined;
 
     public static includesDict: { [deviceType: string]: string } = {
       WledDevice: 'hoffmation-base/lib',
@@ -134,12 +147,16 @@ function createRooms(): void {
       ZigbeeUbisysAcuator: 'hoffmation-base/lib',
       ZigbeeUbisysLampe: 'hoffmation-base/lib',
       ZigbeeUbisysShutter: 'hoffmation-base/lib',
+      ShellyTrv: 'hoffmation-base/lib',
+      TuyaGarageOpener: 'hoffmation-base/lib',
     };
 
     public constructor(roomDefinition: RoomModel) {
       this.nameShort = roomDefinition.nameShort;
       this.nameLong = roomDefinition.nameLong;
       this.floor = roomDefinition.floor;
+      this.startPoint = roomDefinition.startCoordinate;
+      this.endPoint = roomDefinition.endCoordinate;
       this.fileName = `${this.floor}_${this.nameShort.replace(' ', '').toLowerCase()}.ts`;
       this.folderName = this.fileName.replace('.ts', '');
       this.folderPath = `./src/OwnRooms/${this.folderName}`;
@@ -217,6 +234,7 @@ function createRooms(): void {
       this.fileBuilder.push(`import { Devices } from 'hoffmation-base/lib';
 import { RoomSettings, RoomInitializationSettings, RoomDeviceAddingSettings } from 'hoffmation-base/lib';
 import { RoomBase } from 'hoffmation-base/lib';
+import { TrilaterationPoint } from 'hoffmation-base/lib';
 import { DeviceType } from 'hoffmation-base/lib';
 import { GroupType, BaseGroup } from 'hoffmation-base/lib';
 import { WindowGroup } from 'hoffmation-base/lib';
@@ -263,6 +281,20 @@ import { OwnAcDevices } from 'hoffmation-base/lib';`,
       const bottomDeviceBuilder: string[] = [];
       variablesBuilder.push(`  public static roomName = '${this.nameShort}';
   public static roomObject: ${this.className};`);
+      if (this.startPoint !== undefined) {
+        variablesBuilder.push(
+          `public static startPoint: TrilaterationPoint = new TrilaterationPoint(${this.startPoint.x}, ${this.startPoint.y},${this.startPoint.z}, '${this.nameShort}');`,
+        );
+      } else {
+        variablesBuilder.push(`public static startPoint: TrilaterationPoint | undefined = undefined;`);
+      }
+      if (this.endPoint !== undefined) {
+        variablesBuilder.push(
+          `public static endPoint: TrilaterationPoint = new TrilaterationPoint(${this.endPoint.x}, ${this.endPoint.y},${this.endPoint.z}, '${this.nameShort}');`,
+        );
+      } else {
+        variablesBuilder.push(`public static endPoint: TrilaterationPoint | undefined = undefined;`);
+      }
       initializeBuilder.push(`  public static initialize(): void {
     ${this.classNameCustom}.preInitialize();`);
 
@@ -287,7 +319,7 @@ import { OwnAcDevices } from 'hoffmation-base/lib';`,
               `this._deviceCluster.addByDeviceType(${this.className}.${device.nameShort});`,
             );
             bottomDeviceBuilder.push(
-              `\t\tioDevices.addDevice(DeviceType.${type}, ${this.className}.${device.setIdName}, ${device.roomIndex}, '${device.nameLong}');`,
+              `\t\tioDevices.addDevice(DeviceType.${device.deviceTypeOveride}, ${this.className}.${device.setIdName}, ${device.roomIndex}, '${device.nameLong}');`,
             );
             if (!noGetter) {
               getterBuilder.push(
@@ -333,7 +365,13 @@ ${this.className}.prepareDeviceAdding();`);
       this.fileBuilder.push(groupInitialize.join('\n'));
 
       this.fileBuilder.push(`\n 
-    super(groups, ${this.className}.roomName, ${this.floor});
+    super(
+      groups,
+      ${this.className}.roomName,
+      ${this.floor},
+      ${this.className}.startPoint,
+      ${this.className}.endPoint,
+    );
     ${this.className}.roomObject = this;`);
       this.fileBuilder.push(clusterInitialize.join('\n'));
       this.fileBuilder.push(`
@@ -439,8 +477,11 @@ ${this.className}.prepareDeviceAdding();`);
               `   ${completeName} = new OwnDaikinDevice('${d.nameShort}', ${this.className}.roomName, '${d.ipAddress}', undefined);`,
             );
           } else if (d.isEspresense) {
+            if (d.coordinate === undefined) {
+              throw new Error(`Espresense ${d.nameShort} has no coordinate`);
+            }
             variablesBuilder.push(
-              `public static Espresense: EspresenseDevice = new EspresenseDevice('${d.nameShort}', this.roomName);`,
+              `public static Espresense: EspresenseDevice = new EspresenseDevice('${d.nameShort}', this.roomName, ${d.coordinate.x}, ${d.coordinate.y}, ${d.coordinate.z});`,
             );
           } else if (d.isSmoke) {
             smoke.push(completeNameWithId);
@@ -522,6 +563,7 @@ ${this.className}.prepareDeviceAdding();`);
     public room: string;
     public customName: string | undefined;
     public deviceType: string;
+    public deviceTypeOveride: string;
     public deviceClass: string;
     public roomIndex: number;
     public nameShort: string;
@@ -545,9 +587,11 @@ ${this.className}.prepareDeviceAdding();`);
     public isSmoke: boolean = false;
     public isWater: boolean = false;
     public isHeater: boolean = false;
+    public isGarageDoor: boolean = false;
     public hasTemperatur: boolean = false;
     public hasHumidity: boolean = false;
     public windowID: number | undefined;
+    public coordinate: Coordinate | undefined;
     public includeInGroup: boolean;
     public groupN: string[] = [];
     private defaultName: string;
@@ -555,7 +599,8 @@ ${this.className}.prepareDeviceAdding();`);
     public constructor(roomkey: string, deviceDefinition: DeviceModel) {
       this.room = roomkey;
       this.deviceType = deviceDefinition.deviceType;
-      const translatedDeviceType: { name: string; deviceClass: string } | undefined = DEVICE_TYPE[this.deviceType];
+      const translatedDeviceType: { name: string; deviceClass: string; overideDeviceType?: string } | undefined =
+        DEVICE_TYPE[this.deviceType];
       if (translatedDeviceType === undefined) {
         throw new Error(`Invalid/Unsuported Device type "${this.deviceType}"`);
       }
@@ -563,6 +608,7 @@ ${this.className}.prepareDeviceAdding();`);
       this.deviceClass = translatedDeviceType.deviceClass;
       this.roomIndex = deviceDefinition.indexInRoom;
       this.defaultName = translatedDeviceType.name;
+      this.deviceTypeOveride = translatedDeviceType.overideDeviceType ?? this.deviceType;
       if (this.roomIndex > 1) {
         this.defaultName += `_${this.roomIndex}`;
       }
@@ -572,6 +618,7 @@ ${this.className}.prepareDeviceAdding();`);
       this.nameLong = `${this.room} ${this.customName !== '' ? this.customName : this.defaultName}`.replace(/_/g, ' ');
       this.windowID = deviceDefinition.windowID;
       this.includeInGroup = deviceDefinition.includeInGroup;
+      this.coordinate = deviceDefinition.coordinate;
 
       this.idName = `id${this.nameShort}`;
       this.setIdName = `set${this.idName.charAt(0).toUpperCase()}${this.idName.substr(1)}`;
@@ -583,6 +630,12 @@ ${this.className}.prepareDeviceAdding();`);
           this.isIoBrokerDevice = true;
           break;
         case 'HmIP':
+          this.isIoBrokerDevice = true;
+          break;
+        case 'Shelly':
+          this.isIoBrokerDevice = true;
+          break;
+        case 'Tuya':
           this.isIoBrokerDevice = true;
           break;
         case 'Window':
@@ -658,11 +711,15 @@ ${this.className}.prepareDeviceAdding();`);
           break;
         case 'HmIpHeizgruppe':
         case 'ZigbeeEuroHeater':
+        case 'ShellyTrv':
           this.isHeater = true;
           break;
         case 'ZigbeeSonoffTemp':
           this.hasHumidity = true;
           this.hasTemperatur = true;
+          break;
+        case 'TuyaGarageOpener':
+          this.isGarageDoor = true;
           break;
       }
       if (this.isCamera) {
