@@ -4,7 +4,9 @@ import config from '../config/private/roomConfig.json';
 const fs = require('fs');
 
 const DEVICE_TYPE: { [type: string]: { name: string; deviceClass: string; overideDeviceType?: string } } = {
-  Camera: { name: 'Camera', deviceClass: 'Camera' },
+  BlueIrisCamera: { name: 'BlueIrisCamera', deviceClass: 'BlueIrisCamera' },
+  UnifiCamera: { name: 'UnifiCamera', deviceClass: 'UnifiCamera' },
+  UnifiDoor: { name: 'UnifiDoor', deviceClass: 'UnifiDoor' },
   Daikin: { name: 'Daikin', deviceClass: 'Daikin' },
   Espresense: { name: 'Espresense', deviceClass: 'Espresense' },
   WledDevice: { name: 'Wled', deviceClass: 'Wled' },
@@ -24,9 +26,14 @@ const DEVICE_TYPE: { [type: string]: { name: string; deviceClass: string; overid
   MieleWasch: { name: 'Waschmaschine', deviceClass: 'Miele' },
   Sonos: { name: 'Sonos', deviceClass: 'Sonos' },
   Govee: { name: 'Govee', deviceClass: 'Govee' },
+  SmartGardenMower: { name: 'Mower', deviceClass: 'SmartGarden' },
+  SmartGardenSensor: { name: 'Soil Sensor', deviceClass: 'SmartGarden' },
+  SmartGardenValve: { name: 'Valve', deviceClass: 'SmartGarden' },
+  VeluxShutter: { name: 'Shutter', deviceClass: 'Velux' },
   ZigbeeAqaraMagnetContact: { name: 'Magnet Contact', deviceClass: 'Zigbee' },
   ZigbeeAqaraOpple3Switch: { name: 'Switch6Buttons', deviceClass: 'Zigbee' },
   ZigbeeAquaraMotion: { name: 'Bewegungsmelder', deviceClass: 'Zigbee' },
+  ZigbeeAqaraPresence: { name: 'Bewegungsmelder', deviceClass: 'Zigbee' },
   ZigbeeAquaraVibra: { name: 'Vibrationssensor', deviceClass: 'Zigbee' },
   ZigbeeAquaraWater: { name: 'Wassermelder', deviceClass: 'Zigbee' },
   ZigbeeBlitzShp: { name: 'Stecker', deviceClass: 'Zigbee' },
@@ -43,12 +50,15 @@ const DEVICE_TYPE: { [type: string]: { name: string; deviceClass: string; overid
   ZigbeeLinkindLedRgbCct: { name: 'LED Bulb', deviceClass: 'Zigbee' },
   ZigbeeOsramDimmer: { name: 'Dimmer', deviceClass: 'Zigbee' },
   ZigbeeSMaBiTMagnetContact: { name: 'Magnet Contact', deviceClass: 'Zigbee' },
+  ZigbeeSodaHandle: { name: 'Griff', deviceClass: 'Zigbee' },
   ZigbeeSonoffMotion: { name: 'Motion Sensor', deviceClass: 'Zigbee' },
+  ZigbeeTuyaMotion: { name: 'Motion Sensor', deviceClass: 'Zigbee' },
   ZigbeeSonoffTemp: { name: 'Temperatur Sensor', deviceClass: 'Zigbee' },
-  ZigbeeUbisysAcuator: { name: 'Shutter', deviceClass: 'Zigbee' },
-  ZigbeeUbisysLampe: { name: 'Shutter', deviceClass: 'Zigbee' },
+  ZigbeeUbisysActuator: { name: 'Actuator', deviceClass: 'Zigbee' },
+  ZigbeeUbisysLampe: { name: 'Light', deviceClass: 'Zigbee' },
   ZigbeeUbisysShutter: { name: 'Shutter', deviceClass: 'Zigbee' },
   ShellyTrv: { name: 'Heater', deviceClass: 'Shelly' },
+  ShellyActuator: { name: 'Actuator', deviceClass: 'Shelly' },
   TuyaGarageOpener: { name: 'GarageDoor', deviceClass: 'Tuya', overideDeviceType: 'TuyaGarageDoorOpener' },
 };
 
@@ -73,11 +83,15 @@ interface DeviceModel {
   ipAddress?: string;
   macAddress?: string;
   blueIrisName?: string;
+  unifiName?: string;
   mqttFolderName?: string;
   customName?: string;
   windowID?: number;
   includeInGroup: boolean;
   coordinate?: Coordinate;
+  smartGardenId?: string;
+  veluxProductId?: string;
+  ignore?: boolean;
 }
 
 interface RoomConfigModel {
@@ -108,7 +122,9 @@ function createRooms(): void {
 
     public static includesDict: { [deviceType: string]: string } = {
       WledDevice: 'hoffmation-base/lib',
-      Camera: 'hoffmation-base/lib',
+      BlueIrisCamera: 'hoffmation-base/lib',
+      UnifiCamera: 'hoffmation-base/lib',
+      UnifiDoor: 'hoffmation-base/lib',
       Daikin: 'hoffmation-base/lib',
       Espresense: 'hoffmation-base/lib',
       Govee: 'hoffmation-base/lib',
@@ -126,9 +142,14 @@ function createRooms(): void {
       HmIpWippe: 'hoffmation-base/lib',
       Window: 'hoffmation-base/lib',
       Sonos: 'hoffmation-base/lib',
+      SmartGardenMower: 'hoffmation-base/lib',
+      SmartGardenSensor: 'hoffmation-base/lib',
+      SmartGardenValve: 'hoffmation-base/lib',
+      VeluxShutter: 'hoffmation-base/lib',
       ZigbeeAqaraMagnetContact: 'hoffmation-base/lib',
       ZigbeeAqaraOpple3Switch: 'hoffmation-base/lib',
       ZigbeeAquaraMotion: 'hoffmation-base/lib',
+      ZigbeeAqaraPresence: 'hoffmation-base/lib',
       ZigbeeAquaraVibra: 'hoffmation-base/lib',
       ZigbeeAquaraWater: 'hoffmation-base/lib',
       ZigbeeBlitzShp: 'hoffmation-base/lib',
@@ -145,12 +166,15 @@ function createRooms(): void {
       ZigbeeLinkindLedRgbCct: 'hoffmation-base/lib',
       ZigbeeOsramDimmer: 'hoffmation-base/lib',
       ZigbeeSMaBiTMagnetContact: 'hoffmation-base/lib',
+      ZigbeeSodaHandle: 'hoffmation-base/lib',
       ZigbeeSonoffMotion: 'hoffmation-base/lib',
+      ZigbeeTuyaMotion: 'hoffmation-base/lib',
       ZigbeeSonoffTemp: 'hoffmation-base/lib',
-      ZigbeeUbisysAcuator: 'hoffmation-base/lib',
+      ZigbeeUbisysActuator: 'hoffmation-base/lib',
       ZigbeeUbisysLampe: 'hoffmation-base/lib',
       ZigbeeUbisysShutter: 'hoffmation-base/lib',
       ShellyTrv: 'hoffmation-base/lib',
+      ShellyActuator: 'hoffmation-base/lib',
       TuyaGarageOpener: 'hoffmation-base/lib',
     };
 
@@ -247,6 +271,10 @@ import { TasterGroup } from 'hoffmation-base/lib';
 import { SmokeGroup } from 'hoffmation-base/lib';
 import { WaterGroup } from 'hoffmation-base/lib';
 import { HeatGroup } from 'hoffmation-base/lib';
+import { SmartGardenDeviceRegistrationInfo } from 'hoffmation-base/lib';
+import { SmartGardenService } from 'hoffmation-base/lib';
+import { VeluxService } from 'hoffmation-base/lib';
+import { VeluxDeviceRegistrationInfo } from 'hoffmation-base/lib';
 import { SpeakerGroup } from 'hoffmation-base/lib';`);
 
       for (const type in this.devices) {
@@ -265,8 +293,18 @@ import { OwnGoveeDevices } from 'hoffmation-base/lib';`,
             `import { OwnDaikinDevice } from '${Room.includesDict[type]}';
 import { OwnAcDevices } from 'hoffmation-base/lib';`,
           );
-        } else if (type === 'Camera') {
-          this.fileBuilder.push(`import { CameraDevice } from '${Room.includesDict[type]}';`);
+        } else if (type === 'BlueIrisCamera') {
+          this.fileBuilder.push(`import { BlueIrisCameraDevice } from '${Room.includesDict[type]}';`);
+        } else if (type === 'UnifiCamera') {
+          this.fileBuilder.push(
+            `import { OwnUnifiCamera } from '${Room.includesDict[type]}';
+import { UnifiProtect } from 'hoffmation-base/lib';`,
+          );
+        } else if (type === 'UnifiDoor') {
+          this.fileBuilder.push(
+            `import { OwnUnifiDoor } from '${Room.includesDict[type]}';
+import { UnifiAccess } from 'hoffmation-base/lib';`,
+          );
         } else if (type === 'Espresense') {
           this.fileBuilder.push(`import { EspresenseDevice } from '${Room.includesDict[type]}';`);
         } else {
@@ -322,16 +360,45 @@ import { OwnAcDevices } from 'hoffmation-base/lib';`,
             device.isWindow ||
             device.isDaikin ||
             device.isEspresense ||
-            device.isCamera;
+            device.isBlueIrisCamera ||
+            device.isUnifiDoor ||
+            device.isUnifiCamera;
           const noID: boolean =
             device.isSonos ||
             device.isGovee ||
             device.isWindow ||
             device.isDaikin ||
             device.isEspresense ||
-            device.isCamera;
+            device.isUnifiDoor ||
+            device.isUnifiCamera ||
+            device.isBlueIrisCamera;
           !noID && variablesBuilder.push(`private static ${device.idName}: string = '';`);
           !noGetter && getterBuilder.push(`\n  public static get ${device.nameShort}(): ${type} {`);
+          if (device.isSmartGarden) {
+            if (device.smartGardenId === undefined) {
+              throw new Error(`SmartGardenId not defined for ${device.nameShort} in room ${this.nameShort}`);
+            }
+            bottomDeviceBuilder.push(`SmartGardenService.preRegisterDevice('${device.smartGardenId}', new SmartGardenDeviceRegistrationInfo(
+    DeviceType.${device.deviceType},
+    '${device.smartGardenId}',
+    '${device.nameShort}',
+    '${device.room}',
+    ${device.roomIndex},
+  ));`);
+          } else if (device.isVelux) {
+            if (device.veluxProductId === undefined) {
+              throw new Error(`VeluxProductId not defined for ${device.nameShort} in room ${this.nameShort}`);
+            }
+            bottomDeviceBuilder.push(
+              `VeluxService.preRegisterDevice('00-Velux-${this.nameShort}-${device.deviceType}-${device.roomIndex}', new VeluxDeviceRegistrationInfo(
+    DeviceType.${device.deviceType},
+    '${device.veluxProductId}',
+    '${device.nameShort}',
+    '${this.nameShort}',
+    ${device.roomIndex},
+  ));`,
+            );
+          }
           if (device.isIoBrokerDevice) {
             clusterInitializerBuilder.push(
               `this._deviceCluster.addByDeviceType(${this.className}.${device.nameShort});`,
@@ -350,6 +417,10 @@ import { OwnAcDevices } from 'hoffmation-base/lib';`,
             bottomDeviceBuilder.push(`OwnGoveeDevices.addDevice(${this.className}.${device.nameShort});`);
           } else if (device.isDaikin) {
             postRoomSettingsBuilder.push(`OwnAcDevices.addDevice(${this.className}.${device.nameShort});`);
+          } else if (device.isUnifiCamera) {
+            postRoomSettingsBuilder.push(`UnifiProtect.addDevice(${this.className}.${device.nameShort});`);
+          } else if (device.isUnifiDoor) {
+            postRoomSettingsBuilder.push(`UnifiAccess.addDevice(${this.className}.${device.nameShort});`);
           }
           !noGetter && getterBuilder.push(`  }`);
           if (!noID) {
@@ -371,7 +442,7 @@ import { OwnAcDevices } from 'hoffmation-base/lib';`,
       bottomDeviceBuilder.push(`
     
     const initSettings: RoomInitializationSettings = new RoomInitializationSettings('${this.nameShort}')
-    initSettings.deviceAddidngSettings = ioDevices;
+    initSettings.deviceAddingSettings = ioDevices;
     RoomInitializationSettings.registerRoomForDevices(initSettings);
     }`);
       this.fileBuilder.push(bottomDeviceBuilder.join('\n'));
@@ -484,24 +555,37 @@ ${this.className}.prepareDeviceAdding();`);
             );
           } else if (d.isGovee) {
             variablesBuilder.push(
-              `public static ${d.nameShort}: OwnGoveeDevice = new OwnGoveeDevice('${d.macAddress}','${d.nameShort}', this.roomName, undefined);`,
+              `public static ${d.nameShort}: OwnGoveeDevice = new OwnGoveeDevice('${d.macAddress}','${d.nameShort}', this.roomName);`,
             );
             if (d.includeInGroup) {
               led.push(`${completeName}.id`);
             }
-          } else if (d.isCamera) {
-            variablesBuilder.push(`public static ${d.nameShort}: CameraDevice;`);
+          } else if (d.isBlueIrisCamera) {
+            variablesBuilder.push(`public static ${d.nameShort}: BlueIrisCameraDevice;`);
             postRoomSettingsBuilder.push(
-              `    ${completeName} = new CameraDevice('${d.mqttFolderName}', ${this.className}.roomName, '${d.blueIrisName}')`,
+              `    ${completeName} = new BlueIrisCameraDevice('${d.mqttFolderName}', ${this.className}.roomName, '${d.blueIrisName}')`,
             );
             if (d.includeInGroup) {
               beweg.push(`${completeName}.id`);
             }
+          } else if (d.isUnifiCamera) {
+            variablesBuilder.push(`public static ${d.nameShort}: OwnUnifiCamera;`);
+            postRoomSettingsBuilder.push(
+              `    ${completeName} = new OwnUnifiCamera('${d.customName}', ${this.className}.roomName, '${d.unifiName}')`,
+            );
+            if (d.includeInGroup) {
+              beweg.push(`${completeName}.id`);
+            }
+          } else if (d.isUnifiDoor) {
+            variablesBuilder.push(`public static ${d.nameShort}: OwnUnifiDoor;`);
+            postRoomSettingsBuilder.push(
+              `    ${completeName} = new OwnUnifiDoor('${d.customName}', ${this.className}.roomName, '${d.unifiName}')`,
+            );
           } else if (d.isDaikin) {
             daikin.push(`${this.className}.${d.nameShort}.id`);
             variablesBuilder.push(`public static ${d.nameShort}: OwnDaikinDevice;`);
             postRoomSettingsBuilder.push(
-              `   ${completeName} = new OwnDaikinDevice('${d.nameShort}', ${this.className}.roomName, '${d.ipAddress}', undefined);`,
+              `   ${completeName} = new OwnDaikinDevice('${d.nameShort}', ${this.className}.roomName, '${d.ipAddress}', undefined, '${d.macAddress}');`,
             );
           } else if (d.isEspresense) {
             if (d.coordinate === undefined) {
@@ -586,6 +670,7 @@ ${this.className}.prepareDeviceAdding();`);
     public ipAddress: string = '';
     public macAddress: string = '';
     public blueIrisName: string = '';
+    public unifiName: string = '';
     public mqttFolderName: string = '';
     public setIdName: string;
     public room: string;
@@ -596,11 +681,16 @@ ${this.className}.prepareDeviceAdding();`);
     public roomIndex: number;
     public nameShort: string;
     public nameLong: string;
+    public ignore: boolean = false;
     public isIoBrokerDevice: boolean = false;
     public isWindow: boolean = false;
     public isSonos: boolean = false;
+    public isSmartGarden: boolean = false;
+    public isVelux: boolean = false;
     public isGovee: boolean = false;
-    public isCamera: boolean = false;
+    public isBlueIrisCamera: boolean = false;
+    public isUnifiCamera: boolean = false;
+    public isUnifiDoor: boolean = false;
     public isDaikin: boolean = false;
     public isEspresense: boolean = false;
     public isWled: boolean = false;
@@ -621,6 +711,8 @@ ${this.className}.prepareDeviceAdding();`);
     public hasHumidity: boolean = false;
     public windowID: number | undefined;
     public coordinate: Coordinate | undefined;
+    public smartGardenId: string | undefined;
+    public veluxProductId: string | undefined;
     public includeInGroup: boolean;
     public groupN: string[] = [];
     private defaultName: string;
@@ -654,7 +746,11 @@ ${this.className}.prepareDeviceAdding();`);
       this.ipAddress = deviceDefinition.ipAddress ?? '';
       this.macAddress = deviceDefinition.macAddress ?? '';
       this.blueIrisName = deviceDefinition.blueIrisName ?? '';
+      this.unifiName = deviceDefinition.unifiName ?? '';
       this.mqttFolderName = deviceDefinition.mqttFolderName ?? '';
+      this.smartGardenId = deviceDefinition.smartGardenId;
+      this.veluxProductId = deviceDefinition.veluxProductId;
+      this.ignore = deviceDefinition.ignore ?? false;
       switch (this.deviceClass) {
         case 'Zigbee':
           this.isIoBrokerDevice = true;
@@ -674,11 +770,25 @@ ${this.className}.prepareDeviceAdding();`);
         case 'Sonos':
           this.isSonos = true;
           break;
+        case 'SmartGarden':
+          this.isSmartGarden = true;
+          this.isIoBrokerDevice = true;
+          break;
+        case 'Velux':
+          this.isVelux = true;
+          this.isIoBrokerDevice = true;
+          break;
         case 'Govee':
           this.isGovee = true;
           break;
-        case 'Camera':
-          this.isCamera = true;
+        case 'BlueIrisCamera':
+          this.isBlueIrisCamera = true;
+          break;
+        case 'UnifiCamera':
+          this.isUnifiCamera = true;
+          break;
+        case 'UnifiDoor':
+          this.isUnifiDoor = true;
           break;
         case 'Daikin':
           this.isDaikin = true;
@@ -697,7 +807,9 @@ ${this.className}.prepareDeviceAdding();`);
       switch (this.deviceType) {
         case 'HmIpBewegung':
         case 'ZigbeeAquaraMotion':
+        case 'ZigbeeAqaraPresence':
         case 'ZigbeeSonoffMotion':
+        case 'ZigbeeTuyaMotion':
         case 'HmIpPraezenz':
           this.isBeweg = true;
           break;
@@ -708,10 +820,16 @@ ${this.className}.prepareDeviceAdding();`);
         case 'HmIpRoll':
         case 'ZigbeeIlluShutter':
         case 'ZigbeeUbisysShutter':
+        case 'VeluxShutter':
           this.isRollo = true;
           break;
         case 'HmIpGriff':
           this.isGriff = true;
+          break;
+        case 'ZigbeeSodaHandle':
+          this.isGriff = true;
+          this.hasHumidity = true;
+          this.hasTemperatur = true;
           break;
         case 'HmIpLampe':
         case 'ZigbeeIlluDimmer':
@@ -755,15 +873,23 @@ ${this.className}.prepareDeviceAdding();`);
           this.isGarageDoor = true;
           break;
       }
-      if (this.isCamera) {
-        this.groupN.push(`Camera`);
+      if (this.isBlueIrisCamera) {
+        this.groupN.push(`BlueIrisCamera`);
+      }
+      if (this.isUnifiCamera) {
+        this.groupN.push(`UnifiCamera`);
+      }
+      if (this.isUnifiDoor) {
+        this.groupN.push(`UnifiDoor`);
       }
       if (this.isGovee) {
         this.groupN.push(`Govee`);
       }
       if (this.windowID !== undefined && this.windowID > 0) {
         this.groupN.push(`Window_${this.windowID}`);
-      } else if (this.includeInGroup) {
+      }
+
+      if (this.includeInGroup) {
         if (this.isBeweg) {
           this.groupN.push(`Beweg`);
         }
@@ -831,6 +957,9 @@ ${this.className}.prepareDeviceAdding();`);
     addDevices(roomKey: string, deviceModels: DeviceModel[]): void {
       for (let i = 0; i < deviceModels.length; i++) {
         const device: Device = new Device(roomKey, deviceModels[i]);
+        if (device.ignore) {
+          continue;
+        }
         if (this.rooms[roomKey] === undefined) {
           throw new Error(`Unknown Room ("${roomKey}") within device: ${device.nameLong}`);
         }

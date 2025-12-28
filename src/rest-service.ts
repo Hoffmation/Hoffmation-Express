@@ -1,6 +1,26 @@
 import cors from 'cors';
-import { Express, json } from 'express';
-import { AcMode, API, iRestSettings, LogLevel, ServerLogService } from 'hoffmation-base';
+import { Express, json, Request, Response, NextFunction, static as expressStatic } from 'express';
+import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import {
+  AcMode,
+  ActuatorSetStateCommand,
+  API,
+  BlockAutomaticCommand,
+  BlockAutomaticLiftBlockCommand,
+  CameraDevice,
+  CommandSource,
+  DimmerSetLightCommand,
+  iRestSettings,
+  iTemperatureCollector,
+  LampSetLightCommand,
+  LedSetLightCommand,
+  LogLevel,
+  ServerLogService,
+  ShutterSetLevelCommand,
+  Utils,
+} from 'hoffmation-base';
 import { RequestHandler } from 'express-serve-static-core';
 
 interface CustomHandler {
@@ -37,8 +57,19 @@ export class RestService {
     this.app.use(json());
 
     this._app.listen(config.port, () => {
-      ServerLogService.writeLog(LogLevel.Info, `Example app listening at http://localhost:${config.port}`);
+      ServerLogService.writeLog(LogLevel.Info, `REST service listening at http://localhost:${config.port}`);
     });
+
+    // Serve WebUI static files (only if enabled in config)
+    if (config.webUi) {
+      try {
+        const webuiPath = path.join(__dirname, '..', 'webui', 'dist');
+        this._app.use(expressStatic(webuiPath));
+        ServerLogService.writeLog(LogLevel.Info, `WebUI enabled, serving from ${webuiPath}`);
+      } catch (webUiError) {
+        ServerLogService.writeLog(LogLevel.Error, `Failed to initialize WebUI: ${webUiError}`);
+      }
+    }
 
     this._app.get('/isAlive', (_req, res) => {
       res.send(`Hoffmation-Base active ${new Date()}`);
@@ -46,6 +77,12 @@ export class RestService {
 
     this._app.get('/devices', (_req, res) => {
       return res.send(API.getDevices());
+    });
+
+    this._app.post('/actuator/:deviceId/restart', (req, res) => {
+      const deviceId: string = req.params.deviceId;
+      const clientInfo: string = this.getClientInfo(req);
+      return res.send(this.restartDevice(deviceId, clientInfo));
     });
 
     this._app.get('/devices/:deviceId', (req, res) => {
@@ -82,62 +119,84 @@ export class RestService {
       return res.send(API.setAc(req.params.acId, true, parseInt(req.params.mode) as AcMode, parseInt(req.params.temp)));
     });
 
-    this._app.get('/lamps/:deviceId/:state', (req, res) => {
-      return res.send(API.setLamp(req.params.deviceId, req.params.state === 'true'));
+    this._app.get('/camera/:cameraId/lastMotionImage', (req, res) => {
+      const camera: CameraDevice | undefined = API.getDevice(req.params.cameraId) as CameraDevice | undefined;
+      if (camera === undefined) {
+        res.status(404);
+        return res.send();
+      }
+      camera.log(LogLevel.Debug, 'API Requested last motion image');
+      return res.send(camera.lastImage);
     });
 
-    this._app.get('/lamps/:deviceId/:state/:duration', (req, res) => {
+    this._app.get('/lamps/:deviceId/:state/:duration?', (req, res) => {
+      const blockCommand: BlockAutomaticCommand | undefined | null = this.getBlockComand(req.params.duration);
       return res.send(
-        API.setLamp(req.params.deviceId, req.params.state === 'true', parseInt(req.params.duration) * 60 * 1000),
-      );
-    });
-
-    this._app.get('/actuator/:deviceId/:state', (req, res) => {
-      return res.send(API.setActuator(req.params.deviceId, req.params.state === 'true'));
-    });
-
-    this._app.get('/actuator/:deviceId/:state/:duration', (req, res) => {
-      return res.send(
-        API.setActuator(req.params.deviceId, req.params.state === 'true', parseInt(req.params.duration) * 60 * 1000),
-      );
-    });
-
-    this._app.get('/dimmer/:deviceId/:state', (req, res) => {
-      return res.send(API.setDimmer(req.params.deviceId, req.params.state === 'true'));
-    });
-
-    this._app.get('/dimmer/:deviceId/:state/:brightness', (req, res) => {
-      return res.send(
-        API.setDimmer(
+        API.lampSetLight(
           req.params.deviceId,
-          req.params.state === 'true',
-          60 * 60 * 1000,
-          parseFloat(req.params.brightness),
+          new LampSetLightCommand(
+            CommandSource.API,
+            req.params.state === 'true',
+            this.getClientInfo(req),
+            blockCommand,
+          ),
         ),
       );
     });
 
-    this._app.get('/dimmer/:deviceId/:state/:brightness/:forceDuration', (req, res) => {
+    this._app.get('/actuator/:deviceId/restart', (req, res) => {
+      const deviceId: string = req.params.deviceId;
+      const clientInfo: string = this.getClientInfo(req);
+      return res.send(this.restartDevice(deviceId, clientInfo));
+    });
+
+    this._app.get('/actuator/:deviceId/:state/:duration?', (req, res) => {
+      const blockCommand: BlockAutomaticCommand | undefined | null = this.getBlockComand(req.params.duration);
       return res.send(
-        API.setDimmer(
+        API.actuatorSetState(
           req.params.deviceId,
-          req.params.state === 'true',
-          parseInt(req.params.forceDuration) * 60 * 1000,
-          parseFloat(req.params.brightness),
+          new ActuatorSetStateCommand(
+            CommandSource.API,
+            req.params.state === 'true',
+            this.getClientInfo(req),
+            blockCommand,
+          ),
         ),
       );
     });
 
-    this._app.get('/led/:deviceId/:state/:brightness/:color/:forceDuration', (req, res) => {
+    this._app.get('/dimmer/:deviceId/:state/:brightness?/:forceDuration?', (req, res) => {
+      const blockCommand: BlockAutomaticCommand | undefined | null = this.getBlockComand(req.params.forceDuration);
+      const brightness: number | undefined = this.getIntParameter(req.params.brightness, false);
       return res.send(
-        API.setLedLamp(
+        API.dimmerSetLight(
           req.params.deviceId,
-          req.params.state === 'true',
-          parseInt(req.params.forceDuration) * 60 * 1000,
-          parseFloat(req.params.brightness),
-          undefined,
-          req.params.color,
-          undefined,
+          new DimmerSetLightCommand(
+            CommandSource.API,
+            req.params.state === 'true',
+            this.getClientInfo(req),
+            blockCommand,
+            brightness,
+          ),
+        ),
+      );
+    });
+
+    this._app.get('/led/:deviceId/:state/:brightness/:color/:forceDuration?', (req, res) => {
+      const blockCommand: BlockAutomaticCommand | undefined | null = this.getBlockComand(req.params.forceDuration);
+      return res.send(
+        API.ledSetLight(
+          req.params.deviceId,
+          new LedSetLightCommand(
+            CommandSource.API,
+            req.params.state === 'true',
+            this.getClientInfo(req),
+            blockCommand,
+            parseFloat(req.params.brightness),
+            undefined,
+            req.params.color,
+            undefined,
+          ),
         ),
       );
     });
@@ -147,14 +206,16 @@ export class RestService {
     });
 
     this._app.get('/shutter/:deviceId/:level', (req, res) => {
-      return res.send(API.setShutter(req.params.deviceId, parseInt(req.params.level)));
+      return res.send(
+        API.shutterSetLevel(
+          req.params.deviceId,
+          new ShutterSetLevelCommand(CommandSource.API, parseInt(req.params.level), this.getClientInfo(req)),
+        ),
+      );
     });
 
     this._app.get('/scene/:deviceId/start/:timeout', (req, res) => {
-      let timeout: number | undefined = parseInt(req.params.timeout);
-      if (timeout === 0 || isNaN(timeout)) {
-        timeout = undefined;
-      }
+      const timeout: number | undefined = this.getIntParameter(req.params.timeout, true);
       return res.send(API.startScene(req.params.deviceId, timeout));
     });
 
@@ -191,17 +252,20 @@ export class RestService {
     });
 
     this._app.get('/device/:deviceId/liftAutomaticBlock', (req, res) => {
-      API.liftAutomaticBlock(req.params.deviceId);
+      API.blockAutomaticLiftAutomaticBlock(
+        req.params.deviceId,
+        new BlockAutomaticLiftBlockCommand(CommandSource.API, this.getClientInfo(req)),
+      );
       res.status(200);
       return res.send();
     });
 
     this._app.get('/device/:deviceId/blockAutomatic/:timeout', (req, res) => {
-      let timeout: number | undefined = parseInt(req.params.timeout);
-      if (timeout === 0 || isNaN(timeout)) {
-        timeout = undefined;
-      }
-      API.blockAutomatic(req.params.deviceId, timeout ?? 60 * 60 * 1000);
+      const timeout: number | undefined = this.getIntParameter(req.params.timeout, true);
+      API.blockAutomaticSetBlock(
+        req.params.deviceId,
+        new BlockAutomaticCommand(CommandSource.API, timeout ?? 60 * 60 * 1000, this.getClientInfo(req)),
+      );
       res.status(200);
       return res.send();
     });
@@ -210,9 +274,193 @@ export class RestService {
       return res.send(API.getLastCameraImage(req.params.deviceId));
     });
 
+    this._app.get('/camera/:deviceId/personDetected', (req, res) => {
+      API.cameraInformPersonDetected(req.params.deviceId);
+      res.status(200);
+      return res.send();
+    });
+
+    this._app.get('/temperature/:deviceId/history/:startDate?/:endDate?', async (req, res) => {
+      const temperatureDevice: iTemperatureCollector | undefined = API.getDevice(req.params.deviceId) as
+        | iTemperatureCollector
+        | undefined;
+      if (temperatureDevice === undefined) {
+        res.status(404);
+        return res.send();
+      }
+      const startDate: Date | undefined = req.params.startDate
+        ? new Date(parseInt(req.params.startDate, 10))
+        : undefined;
+      const endDate: Date | undefined = req.params.endDate ? new Date(parseInt(req.params.endDate, 10)) : undefined;
+      return res.send(await temperatureDevice.temperatureSensor.getTemperatureHistory(startDate, endDate));
+    });
+
     this._initialized = true;
     for (const handler of this._queuedCustomHandler) {
       this._app.get(handler.path, handler.handler);
     }
+
+    // Hoffmation service restart endpoint
+    // The service script handles git pull, npm ci, build, start itself
+    this._app.post('/hoffmation/restart', async (_req, res) => {
+      const execAsync = promisify(exec);
+
+      try {
+        ServerLogService.writeLog(LogLevel.Info, 'Hoffmation restart requested');
+
+        // Send response before restart (process will be killed)
+        res.json({
+          success: true,
+          message: 'Hoffmation wird neu gestartet... (git pull, npm ci, build werden vom Service ausgeführt)',
+        });
+
+        // Restart service (delayed to allow response to be sent)
+        setTimeout(async () => {
+          try {
+            ServerLogService.writeLog(LogLevel.Info, 'Executing: sudo systemctl restart hoffmation');
+            await execAsync('sudo systemctl restart hoffmation', { timeout: 30000 });
+          } catch {
+            // Expected: process is killed during restart
+            ServerLogService.writeLog(LogLevel.Info, 'Service restart initiated');
+          }
+        }, 500);
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        ServerLogService.writeLog(LogLevel.Error, `Hoffmation restart failed: ${err.message}`);
+        return res.status(500).json({ success: false, error: err.message });
+      }
+    });
+
+    // WebUI update endpoint - git pull, npm ci, build
+    this._app.post('/webui/update', async (_req, res) => {
+      const execAsync = promisify(exec);
+      const webuiDir = path.join(__dirname, '..', 'webui');
+      const steps: { step: string; success: boolean; output?: string; error?: string }[] = [];
+
+      try {
+        ServerLogService.writeLog(LogLevel.Info, 'WebUI update started');
+
+        // Step 1: Git fetch
+        try {
+          const fetchResult = await execAsync('git fetch', { cwd: path.join(__dirname, '..') });
+          steps.push({ step: 'git fetch', success: true, output: fetchResult.stdout.trim() || 'Fetched' });
+          ServerLogService.writeLog(LogLevel.Info, `Git fetch: ${fetchResult.stdout.trim() || 'OK'}`);
+        } catch (fetchError: unknown) {
+          const err = fetchError as { message?: string };
+          steps.push({ step: 'git fetch', success: false, error: err.message });
+          ServerLogService.writeLog(LogLevel.Error, `Git fetch failed: ${err.message}`);
+        }
+
+        // Step 2: Git pull
+        try {
+          const gitResult = await execAsync('git pull', { cwd: path.join(__dirname, '..') });
+          steps.push({ step: 'git pull', success: true, output: gitResult.stdout.trim() });
+          ServerLogService.writeLog(LogLevel.Info, `Git pull: ${gitResult.stdout.trim()}`);
+        } catch (gitError: unknown) {
+          const err = gitError as { message?: string };
+          steps.push({ step: 'git pull', success: false, error: err.message });
+          ServerLogService.writeLog(LogLevel.Error, `Git pull failed: ${err.message}`);
+        }
+
+        // Step 3: npm ci in webui
+        try {
+          const npmCiResult = await execAsync('npm ci', { cwd: webuiDir, timeout: 300000 });
+          steps.push({ step: 'npm ci', success: true, output: 'Dependencies installed' });
+          ServerLogService.writeLog(LogLevel.Info, `npm ci completed: ${npmCiResult.stdout.substring(0, 200)}`);
+        } catch (npmError: unknown) {
+          const err = npmError as { message?: string };
+          steps.push({ step: 'npm ci', success: false, error: err.message });
+          ServerLogService.writeLog(LogLevel.Error, `npm ci failed: ${err.message}`);
+          return res.status(500).json({ success: false, steps });
+        }
+
+        // Step 4: Build webui
+        try {
+          const buildResult = await execAsync('npm run build', { cwd: webuiDir, timeout: 300000 });
+          steps.push({ step: 'npm run build', success: true, output: 'Build completed' });
+          ServerLogService.writeLog(LogLevel.Info, `Build completed: ${buildResult.stdout.substring(0, 200)}`);
+        } catch (buildError: unknown) {
+          const err = buildError as { message?: string };
+          steps.push({ step: 'npm run build', success: false, error: err.message });
+          ServerLogService.writeLog(LogLevel.Error, `Build failed: ${err.message}`);
+          return res.status(500).json({ success: false, steps });
+        }
+
+        ServerLogService.writeLog(LogLevel.Info, 'WebUI update completed successfully');
+        return res.json({ success: true, steps, message: 'WebUI updated. Refresh browser to see changes.' });
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        ServerLogService.writeLog(LogLevel.Error, `WebUI update failed: ${err.message}`);
+        return res.status(500).json({ success: false, steps, error: err.message });
+      }
+    });
+
+    // SPA fallback - serve index.html for all non-API routes (only if WebUI enabled)
+    if (config.webUi) {
+      this._app.get('*', (_req, res) => {
+        try {
+          res.sendFile(path.join(__dirname, '..', 'webui', 'dist', 'index.html'));
+        } catch (e) {
+          ServerLogService.writeLog(LogLevel.Error, `WebUI SPA fallback error: ${e}`);
+          res.status(500).send('WebUI not available');
+        }
+      });
+    }
+
+    // Global error handler - prevents crashes from propagating
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    this._app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+      ServerLogService.writeLog(LogLevel.Error, `REST API Error: ${err.message}\n${err.stack}`);
+      res.status(500).json({ error: 'Internal server error', message: err.message });
+    });
+  }
+
+  private static restartDevice(deviceId: string, clientInfo: string): Error | null {
+    const result: Error | null = API.actuatorSetState(
+      deviceId,
+      new ActuatorSetStateCommand(CommandSource.API, false, `Restart-Off: ${clientInfo}`, null),
+    );
+    if (result !== null) {
+      return result;
+    }
+    Utils.guardedTimeout(() => {
+      API.actuatorSetState(
+        deviceId,
+        new ActuatorSetStateCommand(CommandSource.API, true, `Restart-On: ${clientInfo}`, null),
+      );
+    }, 5000);
+    return null;
+  }
+
+  private static getClientInfo(req: Request): string {
+    return `Client (user-agent: "${req.headers['user-agent']}", ip: ${req.ip}, endpoint: ${req.path})`;
+  }
+
+  private static getBlockComand(timeoutParameter: string | undefined): BlockAutomaticCommand | undefined | null {
+    const timeout: number | undefined = this.getIntParameter(timeoutParameter, false);
+    if (timeout === undefined) {
+      return undefined;
+    }
+    if (timeout < 0) {
+      return null;
+    }
+    return new BlockAutomaticCommand(CommandSource.API, timeout, 'API timeout duration given');
+  }
+
+  private static getIntParameter(
+    parameterValue: string | undefined,
+    negativeAsUndefined: boolean = false,
+  ): number | undefined {
+    if (parameterValue === undefined) {
+      return undefined;
+    }
+    const parsedValue = parseInt(parameterValue);
+    if (isNaN(parsedValue)) {
+      return undefined;
+    }
+    if (negativeAsUndefined && parsedValue < 0) {
+      return undefined;
+    }
+    return parsedValue;
   }
 }
